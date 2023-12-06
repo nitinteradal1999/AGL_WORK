@@ -1,0 +1,28 @@
+# Copyright (C) 2020-2022 SanCloud Ltd
+# SPDX-License-Identifier: MIT
+
+header:
+  version: 9
+  includes:
+    - kas/poky-kirkstone-bbe.yml
+
+distro: arago
+target:
+  - tisdk-default-image
+
+repos:
+  meta-arago:
+    url: https://git.yoctoproject.org/git/meta-arago
+    refspec: 5c50d658bb3f797314d4a337904a04661f51c51c   # 09.00.00.001
+    path: layers/meta-arago
+    layers:
+      meta-arago-distro:
+      meta-arago-extras:
+  meta-qt5:
+    url: https://github.com/meta-qt5/meta-qt5.git
+    path: layers/meta-qt5
+    refspec: bff5bd937f0776166e81a63f3dd39ede348ef758   # 2023-04-28
+  meta-virtualization:
+    url: https://git.yoctoproject.org/git/meta-virtualization
+    refspec: 9d056f957b42e31f1c2c5bad0af1ab6c84b53ee6   # 2023-05-17
+    path: layers/meta-virtualization

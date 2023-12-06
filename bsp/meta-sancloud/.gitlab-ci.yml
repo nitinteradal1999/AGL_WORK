@@ -1,0 +1,46 @@
+# Copyright (c) 2022 SanCloud Ltd
+# SPDX-License-Identifier: MIT
+
+stages:
+  - build
+  - finalize
+
+.bsp_build:
+  image: quay.io/sancloudltd/poky-build:latest
+  stage: build
+  tags:
+    - yocto
+  cache:
+    key: layers
+    paths:
+      - layers
+  script:
+    - ./scripts/maintainer.py build -i /mnt/cache/yocto/site.conf -s ${SERIES} -d ${DISTRO} -x ci
+
+poky-dunfell-bbe:
+  extends: .bsp_build
+  variables:
+    SERIES: dunfell
+    DISTRO: poky
+
+arago-dunfell-bbe:
+  extends: .bsp_build
+  image: quay.io/sancloudltd/arago-build:latest
+  variables:
+    SERIES: dunfell
+    DISTRO: arago
+
+poky-kirkstone-bbe:
+  extends: .bsp_build
+  variables:
+    SERIES: kirkstone
+    DISTRO: poky
+
+update-tracking-branches:
+  only:
+    - main
+  stage: finalize
+  image: quay.io/sancloudltd/dev23-base:latest
+  script:
+    - git push --force https://ci-push:${CI_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git HEAD:dunfell
+    - git push --force https://ci-push:${CI_PUSH_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git HEAD:kirkstone

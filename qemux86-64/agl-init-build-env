@@ -1,0 +1,9 @@
+. /home/ngx/AGL/pike/external/poky/oe-init-build-env /home/ngx/AGL/pike/qemux86-64
+if [ -n "$DL_DIR" ]; then
+	BB_ENV_PASSTHROUGH_ADDITIONS="$BB_ENV_PASSTHROUGH_ADDITIONS DL_DIR"
+fi
+if [ -n "$SSTATE_DIR" ]; then
+	BB_ENV_PASSTHROUGH_ADDITIONS="$BB_ENV_PASSTHROUGH_ADDITIONS SSTATE_DIR"
+fi
+export BB_ENV_PASSTHROUGH_ADDITIONS
+unset TEMPLATECONF

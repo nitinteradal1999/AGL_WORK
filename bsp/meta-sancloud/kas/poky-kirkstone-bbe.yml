@@ -1,0 +1,41 @@
+# Copyright (C) 2020-2022 SanCloud Ltd
+# SPDX-License-Identifier: MIT
+
+header:
+  version: 9
+  includes:
+    - kas/poky-dunfell-bbe.yml
+
+repos:
+  meta-sancloud:
+  poky:
+    refspec: f53ab3a2ff206a130cdc843839dd0ea5ec4ad02f   # yocto-4.0.10
+  meta-openembedded:
+    refspec: 5f120a926b0fcd55cfe7565bb7ddf23661cad498   # 2023-05-23
+  meta-arm:
+    refspec: 96aad3b29aa7a5ee4df5cf617a6336e5218fa9bd   # 4.0.2
+  meta-ti:
+    refspec: 579671a75efc690a4289ec1c3cf06f18d22300a1   # 09.00.00.001
+    layers:
+      meta-ti-bsp:
+      meta-ti-extras:
+
+local_conf_header:
+  base: |
+    PACKAGE_CLASSES ?= "package_rpm"
+    SDKMACHINE ?= "x86_64"
+    EXTRA_IMAGE_FEATURES ?= "debug-tweaks"
+    USER_CLASSES ?= "buildstats"
+    PATCHRESOLVE = "noop"
+    BB_DISKMON_DIRS ?= "\
+        STOPTASKS,${TMPDIR},1G,100K \
+        STOPTASKS,${DL_DIR},1G,100K \
+        STOPTASKS,${SSTATE_DIR},1G,100K \
+        STOPTASKS,/tmp,100M,100K \
+        HALT,${TMPDIR},100M,1K \
+        HALT,${DL_DIR},100M,1K \
+        HALT,${SSTATE_DIR},100M,1K \
+        HALT,/tmp,10M,1K"
+    CONF_VERSION = "2"
+    TCLIBCAPPEND = ""
+    require conf/include/sancloud-mirrors.inc

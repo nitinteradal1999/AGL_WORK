@@ -1,0 +1,211 @@
+From d70ec96c2703c421bff55f5d2dce8d8aa5f8819b Mon Sep 17 00:00:00 2001
+From: Damian Hobson-Garcia <dhobsong@igel.co.jp>
+Date: Tue, 12 Apr 2022 15:12:27 +0900
+Subject: [PATCH] Add drm-lease support
+
+Add an option to use a DRM lease instead of a DRM device
+as the video output.  This will allow agl-compositor to
+operate alongside other applications output via a DRM
+lease.
+
+Signed-off-by: Damian Hobson-Garcia <dhobsong@igel.co.jp>
+---
+ meson.build          |  6 +++++
+ meson_options.txt    |  7 ++++++
+ src/compositor.c     |  7 ++++++
+ src/drm-lease.c      | 52 ++++++++++++++++++++++++++++++++++++++++++++
+ src/drm-lease.h      | 19 ++++++++++++++++
+ src/ivi-compositor.h |  2 ++
+ 6 files changed, 93 insertions(+)
+ create mode 100644 src/drm-lease.c
+ create mode 100644 src/drm-lease.h
+
+diff --git a/meson.build b/meson.build
+index 0958f06..cc5085f 100644
+--- a/meson.build
++++ b/meson.build
+@@ -194,6 +194,12 @@ elif policy_to_install == 'rba'
+   message('Installing rba policy')
+ endif
+ 
++if get_option('drm-lease')
++  deps_libweston += dependency('libdlmclient')
++  srcs_agl_compositor += 'src/drm-lease.c'
++  config_h.set('HAVE_DRM_LEASE', '1')
++endif
++
+ # From meson documentation:
+ # In order to look for headers in a specific directory you can use args :
+ # '-I/extra/include/dir, but this should only be used in exceptional cases for
+diff --git a/meson_options.txt b/meson_options.txt
+index dd1f3c0..89de273 100644
+--- a/meson_options.txt
++++ b/meson_options.txt
+@@ -5,3 +5,10 @@ option(
+ 	value: 'allow-all',
+ 	description: 'Default policy when no specific policy was set'
+ )
++
++option(
++	'drm-lease',
++	type: 'boolean',
++	value: false,
++	description: 'Support for running weston with a leased DRM Master'
++)
+diff --git a/src/compositor.c b/src/compositor.c
+index 634c468..f328a99 100644
+--- a/src/compositor.c
++++ b/src/compositor.c
+@@ -64,6 +64,8 @@
+ #include <waltham-transmitter/transmitter_api.h>
+ #endif
+ 
++#include "drm-lease.h"
++
+ static int cached_tm_mday = -1;
+ static struct weston_log_scope *log_scope;
+ 
+@@ -904,11 +906,13 @@ load_drm_backend(struct ivi_compositor *ivi, int *argc, char *argv[])
+ 	int use_pixman = 0;
+ 	bool use_shadow;
+ 	bool without_input = false;
++	char *drm_lease_name = NULL;
+ 	int ret;
+ 
+ 	const struct weston_option options[] = {
+ 		{ WESTON_OPTION_STRING, "seat", 0, &config.seat_id },
+ 		{ WESTON_OPTION_STRING, "drm-device", 0, &config.specific_device },
++		{ WESTON_OPTION_STRING, "drm-lease", 0, &drm_lease_name },
+ 		{ WESTON_OPTION_BOOLEAN, "current-mode", 0, &use_current_mode },
+ 		{ WESTON_OPTION_BOOLEAN, "use-pixman", 0, &use_pixman },
+ 		{ WESTON_OPTION_BOOLEAN, "continue-without-input", false, &without_input }
+@@ -916,6 +920,7 @@ load_drm_backend(struct ivi_compositor *ivi, int *argc, char *argv[])
+ 
+ 	parse_options(options, ARRAY_LENGTH(options), argc, argv);
+ 	config.use_pixman = use_pixman;
++	config.device_fd = get_drm_lease(&ivi->drm_lease, drm_lease_name);
+ 	ivi->cmdline.use_current_mode = use_current_mode;
+ 
+ 	section = weston_config_get_section(ivi->config, "core", NULL, NULL);
+@@ -947,6 +952,7 @@ load_drm_backend(struct ivi_compositor *ivi, int *argc, char *argv[])
+ error:
+ 	free(config.gbm_format);
+ 	free(config.seat_id);
++	free(drm_lease_name);
+ 	return ret;
+ }
+ 
+@@ -1833,6 +1839,7 @@ error_compositor:
+ 	free(modules);
+ 	modules = NULL;
+ 
++	release_drm_lease(ivi.drm_lease);
+ 	weston_compositor_destroy(ivi.compositor);
+ 
+ 	weston_log_scope_destroy(log_scope);
+diff --git a/src/drm-lease.c b/src/drm-lease.c
+new file mode 100644
+index 0000000..887277d
+--- /dev/null
++++ b/src/drm-lease.c
+@@ -0,0 +1,52 @@
++/*
++ * Copyright © 2022 IGEL Co., Ltd.
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining
++ * a copy of this software and associated documentation files (the
++ * "Software"), to deal in the Software without restriction, including
++ * without limitation the rights to use, copy, modify, merge, publish,
++ * distribute, sublicense, and/or sell copies of the Software, and to
++ * permit persons to whom the Software is furnished to do so, subject to
++ * the following conditions:
++ *
++ * The above copyright notice and this permission notice (including the
++ * next paragraph) shall be included in all copies or substantial
++ * portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
++ * EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
++ * MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
++ * NONINFRINGEMENT.  IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS
++ * BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN
++ * ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN
++ * CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
++ * SOFTWARE.
++ */
++
++#include "drm-lease.h"
++
++#include <libweston/libweston.h>
++
++int get_drm_lease(struct dlm_lease **drm_lease, const char *drm_lease_name) {
++	if (!drm_lease_name)
++		return -1;
++
++	int drm_fd = -1;
++	struct dlm_lease *lease = dlm_get_lease(drm_lease_name);
++	if (lease) {
++		drm_fd = dlm_lease_fd(lease);
++		if (drm_fd < 0)
++		        dlm_release_lease(lease);
++	}
++	if (drm_fd < 0)
++		weston_log("Could not get DRM lease %s\n", drm_lease_name);
++
++	*drm_lease = lease;
++	return drm_fd;
++}
++
++void release_drm_lease(struct dlm_lease *lease) {
++	if (lease)
++		dlm_release_lease(lease);
++}
++
+diff --git a/src/drm-lease.h b/src/drm-lease.h
+new file mode 100644
+index 0000000..9fdc428
+--- /dev/null
++++ b/src/drm-lease.h
+@@ -0,0 +1,19 @@
++#ifndef DRM_LEASE_H
++#define DRM_LEASE_H
++
++#include "config.h"
++
++#ifdef HAVE_DRM_LEASE
++#include <dlmclient.h>
++int get_drm_lease(struct dlm_lease **drm_lease, const char *drm_lease_name);
++void release_drm_lease(struct dlm_lease *drm_lease);
++#else
++struct dlm_lease;
++static int get_drm_lease(struct dlm_lease **drm_lease, const char *drm_lease_name) {
++	return -1;
++}
++static void release_drm_lease(struct dlm_lease *drm_lease) {
++}
++
++#endif
++#endif /* DRM_LEASE_H */
+diff --git a/src/ivi-compositor.h b/src/ivi-compositor.h
+index bf96fc7..fcf11bf 100644
+--- a/src/ivi-compositor.h
++++ b/src/ivi-compositor.h
+@@ -35,6 +35,7 @@
+ #include <libweston-desktop/libweston-desktop.h>
+ 
+ #include "remote.h"
++#include "drm-lease.h"
+ 
+ #include "agl-shell-server-protocol.h"
+ 
+@@ -114,6 +115,7 @@ struct ivi_compositor {
+ 	struct weston_layer fullscreen;
+ 
+ 	struct wl_list child_process_list;
++	struct dlm_lease *drm_lease;
+ };
+ 
+ struct ivi_surface;
+-- 
+2.35.1
+
